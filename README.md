@@ -1,6 +1,6 @@
 # SmithersXServer
 
-Simple X11 Server
+Simple X Server (X11)
 
 Not yet working
 
