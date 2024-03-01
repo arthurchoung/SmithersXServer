@@ -172,6 +172,79 @@ static id name_for_opcode(int opcode)
     return @"unknown";
 }
 
+id name_for_predefined_atom(int atom)
+{
+    if (atom == 1) return @"PRIMARY";
+    if (atom == 2) return @"SECONDARY";
+    if (atom == 3) return @"ARC";
+    if (atom == 4) return @"ATOM";
+    if (atom == 5) return @"BITMAP";
+    if (atom == 6) return @"CARDINAL";
+    if (atom == 7) return @"COLORMAP";
+    if (atom == 8) return @"CURSOR";
+    if (atom == 9) return @"CUT_BUFFER0";
+    if (atom == 10) return @"CUT_BUFFER1";
+    if (atom == 11) return @"CUT_BUFFER2";
+    if (atom == 12) return @"CUT_BUFFER3";
+    if (atom == 13) return @"CUT_BUFFER4";
+    if (atom == 14) return @"CUT_BUFFER5";
+    if (atom == 15) return @"CUT_BUFFER6";
+    if (atom == 16) return @"CUT_BUFFER7";
+    if (atom == 17) return @"DRAWABLE";
+    if (atom == 18) return @"FONT";
+    if (atom == 19) return @"INTEGER";
+    if (atom == 20) return @"PIXMAP";
+    if (atom == 21) return @"POINT";
+    if (atom == 22) return @"RECTANGLE";
+    if (atom == 23) return @"RESOURCE_MANAGER";
+    if (atom == 24) return @"RGB_COLOR_MAP";
+    if (atom == 25) return @"RGB_BEST_MAP";
+    if (atom == 26) return @"RGB_BLUE_MAP";
+    if (atom == 27) return @"RGB_DEFAULT_MAP";
+    if (atom == 28) return @"RGB_GRAY_MAP";
+    if (atom == 29) return @"RGB_GREEN_MAP";
+    if (atom == 30) return @"RGB_RED_MAP";
+    if (atom == 31) return @"STRING";
+    if (atom == 32) return @"VISUALID";
+    if (atom == 33) return @"WINDOW";
+    if (atom == 34) return @"WM_COMMAND";
+    if (atom == 35) return @"WM_HINTS";
+    if (atom == 36) return @"WM_CLIENT_MACHINE";
+    if (atom == 37) return @"WM_ICON_NAME";
+    if (atom == 38) return @"WM_ICON_SIZE";
+    if (atom == 39) return @"WM_NAME";
+    if (atom == 40) return @"WM_NORMAL_HINTS";
+    if (atom == 41) return @"WM_SIZE_HINTS";
+    if (atom == 42) return @"WM_ZOOM_HINTS";
+    if (atom == 43) return @"MIN_SPACE";
+    if (atom == 44) return @"NORM_SPACE";
+    if (atom == 45) return @"MAX_SPACE";
+    if (atom == 46) return @"END_SPACE";
+    if (atom == 47) return @"SUPERSCRIPT_X";
+    if (atom == 48) return @"SUPERSCRIPT_Y";
+    if (atom == 49) return @"SUBSCRIPT_X";
+    if (atom == 50) return @"SUBSCRIPT_Y";
+    if (atom == 51) return @"UNDERLINE_POSITION";
+    if (atom == 52) return @"UNDERLINE_THICKNESS";
+    if (atom == 53) return @"STRIKEOUT_ASCENT";
+    if (atom == 54) return @"STRIKEOUT_DESCENT";
+    if (atom == 55) return @"ITALIC_ANGLE";
+    if (atom == 56) return @"X_HEIGHT";
+    if (atom == 57) return @"QUAD_WIDTH";
+    if (atom == 58) return @"WEIGHT";
+    if (atom == 59) return @"POINT_SIZE";
+    if (atom == 60) return @"RESOLUTION";
+    if (atom == 61) return @"COPYRIGHT";
+    if (atom == 62) return @"NOTICE";
+    if (atom == 63) return @"FONT_NAME";
+    if (atom == 64) return @"FAMILY_NAME";
+    if (atom == 65) return @"FULL_NAME";
+    if (atom == 66) return @"CAP_HEIGHT";
+    if (atom == 67) return @"WM_CLASS";
+    if (atom == 68) return @"WM_TRANSIENT_FOR";
+    return nil;
+}
+
 @implementation Definitions(fjkewlmfkldsmfklmsdklfm)
 + (id)XServer
 {
@@ -228,6 +301,14 @@ static id name_for_opcode(int opcode)
 }
 @end
 @implementation XServer
+- (id)nameForAtom:(int)atom
+{
+    if (atom < 100) {
+        return name_for_predefined_atom(atom);
+    }
+    id key = nsfmt(@"%d", atom);
+    return [_internAtoms valueForKey:key];
+}
 - (id)contextualMenu
 {
 static id str =
@@ -244,6 +325,9 @@ static id str =
 @",sendQueryTreeResponse,sendQueryTreeResponse\n"
 @",sendQueryColorsResponse,sendQueryColorsResponse\n"
 @",sendAllocColorResponse,sendAllocColorResponse\n"
+@",sendQueryFontResponse,sendQueryFontResponse\n"
+@",sendGetModifierMappingResponse,sendGetModifierMappingResponse\n"
+@",sendGetKeyboardMappingResponse,sendGetKeyboardMappingResponse\n"
 @",toggle auto,\"toggleBoolKey:'auto'\"\n"
 ;
     id menu = [[str parseCSVFromString] asMenu];
@@ -262,7 +346,7 @@ static id str =
         _colormap = 98;
         _visualStaticGray = 97;
         _visualTrueColor = 96;
-        _internAtomCounter++;
+        _internAtomCounter = 100;
         [self setValue:nsdict() forKey:@"internAtoms"];
     }
     return self;
@@ -351,26 +435,44 @@ static id str =
         cursorY += [_putImageBitmap bitmapHeight];
     }
 
-    id arr = nsarr();
 
     if (_sequenceNumber) {
         int len = [_data length];
         if (len < 4) {
-            [arr addObject:@"not enough data"];
+            id text = @"not enough data";
+            cursorY += 10;
+            [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
+            cursorY += [bitmap bitmapHeightForText:text];
         } else {
             unsigned char *bytes = [_data bytes];
 
             int opcode = bytes[0];
             int requestLength = read_uint16(bytes+2);
             id text = nsfmt(@"opcode %d (%@) requestLength %d\n", opcode, name_for_opcode(opcode), requestLength);
-            [arr addObject:text];
+            cursorY += 10;
+            [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
+            cursorY += [bitmap bitmapHeightForText:text];
         }
     }
 
 
     if (_text) {
-        [arr addObject:_text];
+        cursorY += 10;
+        if (isnsdict(_text)) {
+            id keys = [_text allKeys];
+            for (int i=0; i<[keys count]; i++) {
+                id key = [keys nth:i];
+                id val = [_text valueForKey:key];
+                id text = nsfmt(@"%@:%@", key, val);
+                [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
+                cursorY += [bitmap bitmapHeightForText:text];
+            }
+        } else {
+            [bitmap drawBitmapText:_text x:r.x+5 y:cursorY];
+            cursorY += [bitmap bitmapHeightForText:_text];
+        }
     }
+    id arr = nsarr();
     [arr addObject:nsfmt(@"auto %d", _auto)];
     [arr addObject:nsfmt(@"sequenceNumber %d", _sequenceNumber)];
     [arr addObject:nsfmt(@"sockfd %d", _sockfd)];
@@ -385,7 +487,8 @@ static id str =
         [arr addObject:nsfmt(@"i %d 0x%.2x %d %c", i, bytes[i], bytes[i], (isprint(bytes[i]) ? bytes[i] : '.'))];
     }
     id text = [arr join:@"\n"];
-    [bitmap drawBitmapText:text x:r.x+5 y:cursorY+5];
+    cursorY += 10;
+    [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
 }
 - (void)handleScrollWheel:(id)event
 {
@@ -398,9 +501,12 @@ static id str =
 }
 - (void)consumeRequest
 {
+    [self setValue:nil forKey:@"text"];
+
     if (!_sequenceNumber) {
         [_data deleteBytesFromIndex:0 length:12];
         _sequenceNumber = 1;
+        [self parseData];
         return;
     }
 
@@ -417,6 +523,7 @@ static id str =
     }
     [_data deleteBytesFromIndex:0 length:requestLength*4];
     _sequenceNumber++;
+    [self parseData];
 }
 - (void)parseData
 {
@@ -474,46 +581,23 @@ lengthOfAuthorizationProtocolData);
         return;
     }
     unsigned char *bytes = [_data bytes];
-    unsigned char *p = bytes;
 
-    int opcode = p[0];
-    int requestLength = read_uint16(p+2);
+    int opcode = bytes[0];
+    int requestLength = read_uint16(bytes+2);
     if (len < requestLength*4) {
         [self setValue:@"not enough data" forKey:@"text"];
         return;
     }
-    p+=4;
 
+    id text = nil;
     if (opcode == 98) { //QueryExtension
-        int lengthOfName = read_uint16(p);
-        p+=2;
-        p+=2;
-        id name = nil;
-        if (lengthOfName) {
-            name = nsfmt(@"%.*s", lengthOfName, p);
-        }
-        id text = nsfmt(
-@"opcode %d (QueryExtension)\n"
-@"requestLength %d\n"
-@"lengthOfName %d\n"
-@"name '%@'\n",
-opcode, requestLength, lengthOfName, name);
-        [self setValue:text forKey:@"text"];
-        return;
+        text = [self parseQueryExtension];
     } else if (opcode == 55) { //CreateGC
-        id text = nsfmt(
-@"opcode %d (CreateGC)\n"
-@"requestLength %d\n",
-opcode, requestLength);
-        [self setValue:text forKey:@"text"];
-        return;
+        text = [self parseCreateGC];
     } else if (opcode == 20) { //GetProperty
-        id text = nsfmt(
-@"opcode %d (GetProperty)\n"
-@"requestLength %d\n",
-opcode, requestLength);
-        [self setValue:text forKey:@"text"];
-        return;
+        text = [self parseGetProperty];
+    } else if (opcode == 45) { //OpenFont
+        text = [self parseOpenFont];
     } else if (opcode == 112) { //SetCloseDownMode
         id text = nsfmt(
 @"opcode %d (SetCloseDownMode)\n"
@@ -571,7 +655,7 @@ opcode, requestLength);
         [self setValue:text forKey:@"text"];
         return;
     } else if (opcode == 72) { //PutImage
-        [self parsePutImageRequest];
+        text = [self parsePutImageRequest];
         return;
     } else if (opcode == 15) { //QueryTree
         id text = nsfmt(
@@ -582,19 +666,172 @@ opcode, requestLength);
         return;
     }
 
-    id text = nsfmt(
-@"opcode %d (unknown)\n"
-@"requestLength %d\n",
-opcode, requestLength);
     [self setValue:text forKey:@"text"];
 }
 
-- (void)parsePutImageRequest
+- (id)parseQueryExtension
 {
     int len = [_data length];
     if (len < 4) {
-        [self setValue:@"not enough data" forKey:@"text"];
-        return;
+        return nil;
+    }
+    unsigned char *bytes = [_data bytes];
+
+    int opcode = bytes[0];
+    if (opcode != 98) {
+        return nil;
+    }
+    int requestLength = read_uint16(bytes+2);
+    if (len < requestLength*4) {
+        return nil;
+    }
+
+    int lengthOfName = read_uint16(bytes+4);
+
+    if (requestLength != 2+((lengthOfName+3)/4)) {
+NSLog(@"requestLength and lengthOfName do not match");
+        return nil;
+    }
+
+    id name = @"";
+    if (lengthOfName > 0) {
+        name = nsfmt(@"%.*s", lengthOfName, bytes+8);
+    }
+
+    id results = nsdict();
+    [results setValue:nsfmt(@"%d", lengthOfName) forKey:@"lengthOfName"];
+    [results setValue:name forKey:@"name"];
+    return results;
+}
+- (id)parseCreateGC
+{
+    int len = [_data length];
+    if (len < 4) {
+        return nil;
+    }
+    unsigned char *bytes = [_data bytes];
+
+    int opcode = bytes[0];
+    if (opcode != 55) {
+        return nil;
+    }
+    int requestLength = read_uint16(bytes+2);
+    if (len < requestLength*4) {
+        return nil;
+    }
+
+    if (requestLength < 4) {
+        return nil;
+    }
+
+    id results = nsdict();
+
+    uint32_t cid = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", cid) forKey:@"cid"];
+    [results setValue:nsfmt(@"0x%x", cid) forKey:@"cidHex"];
+
+    uint32_t drawable = read_uint32(bytes+8);
+    [results setValue:nsfmt(@"%lu", drawable) forKey:@"drawable"];
+    [results setValue:nsfmt(@"0x%x", drawable) forKey:@"drawableHex"];
+
+    uint32_t valueMask = read_uint32(bytes+12);
+    [results setValue:nsfmt(@"%lu", valueMask) forKey:@"valueMask"];
+    [results setValue:nsfmt(@"0x%x", valueMask) forKey:@"valueMaskHex"];
+
+    return results;
+}
+- (id)parseGetProperty
+{
+    int len = [_data length];
+    if (len < 4) {
+        return nil;
+    }
+    unsigned char *bytes = [_data bytes];
+
+    int opcode = bytes[0];
+    if (opcode != 20) {
+        return nil;
+    }
+    int delete = bytes[1];
+    int requestLength = read_uint16(bytes+2);
+    if (len < requestLength*4) {
+        return nil;
+    }
+    if (requestLength != 6) {
+        return nil;
+    }
+
+    id results = nsdict();
+
+    uint32_t window = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", window) forKey:@"window"];
+    [results setValue:nsfmt(@"0x%x", window) forKey:@"windowHex"];
+
+    uint32_t property = read_uint32(bytes+8);
+    [results setValue:nsfmt(@"%lu", property) forKey:@"property"];
+    [results setValue:nsfmt(@"0x%x", property) forKey:@"propertyHex"];
+    [results setValue:[self nameForAtom:property] forKey:@"propertyAtom"];
+
+    uint32_t type = read_uint32(bytes+12);
+    [results setValue:nsfmt(@"%lu", type) forKey:@"type"];
+    [results setValue:nsfmt(@"0x%x", type) forKey:@"typeHex"];
+    [results setValue:[self nameForAtom:type] forKey:@"typeAtom"];
+
+    uint32_t longOffset = read_uint32(bytes+16);
+    [results setValue:nsfmt(@"%lu", longOffset) forKey:@"longOffset"];
+    [results setValue:nsfmt(@"0x%x", longOffset) forKey:@"longOffsetHex"];
+
+    uint32_t longLength = read_uint32(bytes+20);
+    [results setValue:nsfmt(@"%lu", longLength) forKey:@"longLength"];
+    [results setValue:nsfmt(@"0x%x", longLength) forKey:@"longLengthHex"];
+
+    return results;
+}
+- (id)parseOpenFont
+{
+    int len = [_data length];
+    if (len < 4) {
+        return nil;
+    }
+    unsigned char *bytes = [_data bytes];
+
+    int opcode = bytes[0];
+    if (opcode != 45) {
+        return nil;
+    }
+    int requestLength = read_uint16(bytes+2);
+    if (requestLength < 3) {
+        return nil;
+    }
+
+    uint32_t fid = read_uint32(bytes+4);
+    int lengthOfName = read_uint16(bytes+8);
+
+    if (requestLength != 3+((lengthOfName+3)/4)) {
+        return nil;
+    }
+
+    id name = @"";
+    if (lengthOfName > 0) {
+        name = nsfmt(@"%.*s", lengthOfName, bytes+12);
+    }
+
+    id results = nsdict();
+
+    [results setValue:nsfmt(@"%lu", fid) forKey:@"fid"];
+    [results setValue:nsfmt(@"0x%x", fid) forKey:@"fidHex"];
+    [results setValue:name forKey:@"name"];
+
+    return results;
+}
+
+
+
+- (id)parsePutImageRequest
+{
+    int len = [_data length];
+    if (len < 4) {
+        return nil;
     }
     unsigned char *bytes = [_data bytes];
     unsigned char *p = bytes;
@@ -603,8 +840,7 @@ opcode, requestLength);
     int format = p[1];
     int requestLength = read_uint16(p+2);
     if (len < requestLength*4) {
-        [self setValue:@"not enough data" forKey:@"text"];
-        return;
+        return nil;
     }
     p+=4;
     int drawable = read_uint32(p);
@@ -660,7 +896,7 @@ opcode, requestLength);
 @"leftPad %d\n"
 @"depth %d\n"
 , opcode, requestLength, drawable, gc, width, height, dstX, dstY, leftPad, depth);
-    [self setValue:text forKey:@"text"];
+    return text;
 }
 
 - (void)sendResponse
@@ -739,6 +975,44 @@ opcode, requestLength);
         return;
     } else if (opcode == 92) { //LookupColor
         [self sendLookupColorResponse];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 20) { //GetProperty
+        [self sendGetPropertyResponseNONE];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 112) { //SetCloseDownMode
+        [self consumeRequest];
+        return;
+    } else if (opcode == 78) { //CreateColormap
+        [self consumeRequest];
+        return;
+    } else if (opcode == 1) { //CreateWindow
+        [self consumeRequest];
+        return;
+    } else if (opcode == 18) { //ChangeProperty
+        [self consumeRequest];
+        return;
+    } else if (opcode == 45) { //OpenFont
+        [self consumeRequest];
+        return;
+    } else if (opcode == 47) { //QueryFont
+        [self sendQueryFontResponse];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 94) { //CreateGlyphCursor
+        [self consumeRequest];
+        return;
+    } else if (opcode == 46) { //CloseFont
+        [self consumeRequest];
+        return;
+    } else if (opcode == 12) { //ConfigureWindow
+        [self consumeRequest];
+        return;
+    } else if (opcode == 96) { //RecolorCursor
+        [self consumeRequest];
+        return;
+    } else if (opcode == 8) { //MapWindow
         [self consumeRequest];
         return;
     }
@@ -1405,6 +1679,39 @@ NSLog(@"sending %d bytes", p-buf);
     if (_connfd < 0) {
         return;
     }
+
+    int len = [_data length];
+    if (len < 4) {
+NSLog(@"not enough data");
+        return;
+    }
+    unsigned char *bytes = [_data bytes];
+
+    int opcode = bytes[0];
+    if (opcode != 16) {
+        return;
+    }
+
+    int onlyIfExists = bytes[1];
+
+    int requestLength = read_uint16(bytes+2);
+    if (len < requestLength*4) {
+NSLog(@"not enough data");
+        return;
+    }
+
+    int lengthOfName = read_uint16(bytes+4);
+    if (2+((lengthOfName+3)/4) != requestLength) {
+NSLog(@"lengthOfName and requestLength do not match");
+        return;
+    }
+
+    id name = @"none";
+    if (lengthOfName > 0) {
+        name = nsfmt(@"%.*s", lengthOfName, bytes+8);
+    }
+
+
     unsigned char buf[256];
     unsigned char *p = buf;
 
@@ -1441,7 +1748,7 @@ NSLog(@"sending %d bytes", p-buf);
 NSLog(@"sending %d bytes", p-buf);
     send(_connfd, buf, p-buf, 0);
 
-    [_internAtoms setValue:@"insert name" forKey:nsfmt(@"%d", _internAtomCounter)];
+    [_internAtoms setValue:name forKey:nsfmt(@"%d", _internAtomCounter)];
     _internAtomCounter++;
 }
 - (void)sendQueryTreeResponse
@@ -1505,7 +1812,31 @@ NSLog(@"sending %d bytes", p-buf);
     if (_connfd < 0) {
         return;
     }
-    unsigned char buf[4096];
+
+    unsigned char *bytes = [_data bytes];
+    int len = [_data length];
+    if (len < 4) {
+NSLog(@"not enough data");
+        return;
+    }
+
+    int requestLength = read_uint16(bytes+2);
+    if (len < requestLength*4) {
+NSLog(@"not enough data");
+        return;
+    }
+    if (requestLength < 2) {
+NSLog(@"not enough data");
+        return;
+    }
+    int numberOfColors = requestLength - 2;
+
+    unsigned char *buf = malloc(32+8*numberOfColors);
+    if (!buf) {
+NSLog(@"Out of memory");
+exit(1);
+        return;
+    }
     unsigned char *p = buf;
 
     //1     1                               Reply
@@ -1521,15 +1852,11 @@ NSLog(@"sending %d bytes", p-buf);
     p+=2;
 
     //4     2n                              reply length
-    p[0] = 0;
-    p[1] = 2;
-    p[2] = 0;
-    p[3] = 0;
+    write_uint32(p, 2*numberOfColors);
     p+=4;
 
     //2     n                               number of RGBs in colors
-    p[0] = 0;
-    p[1] = 1;
+    write_uint16(p, numberOfColors);
     p+=2;
 
     //22                                    unused
@@ -1537,20 +1864,25 @@ NSLog(@"sending %d bytes", p-buf);
     p+=22;
 
     //8n     LISTofRGB                      colors
-    for (int i=0; i<256; i++) {
+    for (int i=0; i<numberOfColors; i++) {
+        uint32_t pixel = read_uint32(bytes+8+4*i);
+        unsigned char r = (unsigned char) ((pixel>>24)&0xff);
+        unsigned char g = (unsigned char) ((pixel>>16)&0xff);
+        unsigned char b = (unsigned char) ((pixel>>8)&0xff);
+
         //2     CARD16                          red
-        p[0] = 0;
-        p[1] = 0;
+        p[0] = r;
+        p[1] = r;
         p+=2;
 
         //2     CARD16                          green
-        p[0] = 0;
-        p[1] = 0;
+        p[0] = g;
+        p[1] = g;
         p+=2;
 
         //2     CARD16                          blue
-        p[0] = 0;
-        p[1] = 0;
+        p[0] = b;
+        p[1] = b;
         p+=2;
 
         //2                                     unused
@@ -1561,6 +1893,8 @@ NSLog(@"sending %d bytes", p-buf);
 
 NSLog(@"sending %d bytes", p-buf);
     send(_connfd, buf, p-buf, 0);
+
+    free(buf);
 }
 - (void)sendAllocColorResponse
 {
@@ -1569,6 +1903,11 @@ NSLog(@"sending %d bytes", p-buf);
     }
 
     unsigned char *bytes = [_data bytes];
+    int len = [_data length];
+    if (len < 14) {
+NSLog(@"not enough data");
+        return;
+    }
     unsigned char r = bytes[9];
     unsigned char g = bytes[11];
     unsigned char b = bytes[13];
@@ -1744,6 +2083,314 @@ NSLog(@"sending %d bytes", p-buf);
 
 NSLog(@"sending %d bytes", p-buf);
     send(_connfd, buf, p-buf, 0);
+}
+- (void)sendQueryFontResponse
+{
+    if (_connfd < 0) {
+        return;
+    }
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1                                     unused
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     7+2n+3m                         reply length
+    unsigned char *replyLength = p;
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+
+    //12     CHARINFO                       min-bounds
+    //2     INT16                           left-side-bearing
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     INT16                           right-side-bearing
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     INT16                           character-width
+    write_uint16(p, 8);
+    p+=2;
+
+    //2     INT16                           ascent
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     INT16                           descent
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     CARD16                          attributes
+    write_uint16(p, 0);
+    p+=2;
+
+    //4                                     unused
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+
+    //12     CHARINFO                       max-bounds
+    //2     INT16                           left-side-bearing
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     INT16                           right-side-bearing
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     INT16                           character-width
+    write_uint16(p, 8);
+    p+=2;
+
+    //2     INT16                           ascent
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     INT16                           descent
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     CARD16                          attributes
+    write_uint16(p, 0);
+    p+=2;
+
+    //4                                     unused
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+
+    //2     CARD16                          min-char-or-byte2
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     CARD16                          max-char-or-byte2
+    write_uint16(p, 127);
+    p+=2;
+
+    //2     CARD16                          default-char
+    write_uint16(p, 32);
+    p+=2;
+
+    //2     n                               number of FONTPROPs in properties
+    write_uint16(p, 0);
+    p+=2;
+
+    //1                                     draw-direction
+    //      0     LeftToRight
+    //      1     RightToLeft
+    p[0] = 0;
+    p++;
+
+    //1     CARD8                           min-byte1
+    p[0] = 0;
+    p++;
+
+    //1     CARD8                           max-byte1
+    p[0] = 127;
+    p++;
+
+    //1     BOOL                            all-chars-exist
+    p[0] = 1;
+    p++;
+
+    //2     INT16                           font-ascent
+    write_uint16(p, 2);
+    p+=2;
+
+    //2     INT16                           font-descent
+    write_uint16(p, 2);
+    p+=2;
+
+    //4     m                               number of CHARINFOs in char-infos
+    write_uint32(p, 256);
+    p+=4;
+
+    //8n     LISTofFONTPROP                 properties
+    //FONTPROP
+    //4     ATOM                            name
+    //4     <32-bits>                 value
+
+    //12m     LISTofCHARINFO                char-infos
+    for (int i=0; i<256; i++) {
+        //CHARINFO
+        //2     INT16                           left-side-bearing
+        write_uint16(p, 0);
+        p+=2;
+
+        //2     INT16                           right-side-bearing
+        write_uint16(p, 0);
+        p+=2;
+
+        //2     INT16                           character-width
+        write_uint16(p, 8);
+        p+=2;
+
+        //2     INT16                           ascent
+        write_uint16(p, 0);
+        p+=2;
+
+        //2     INT16                           descent
+        write_uint16(p, 0);
+        p+=2;
+
+        //2     CARD16                          attributes
+        write_uint16(p, 0);
+        p+=2;
+    }
+
+    write_uint32(replyLength, (p-buf-32)/4);
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendGetModifierMappingResponse
+{
+    if (_connfd < 0) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1     n                               keycodes-per-modifier
+    p[0] = 4;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     2n                              reply length
+    write_uint32(p, 8);
+    p+=4;
+
+    //24                                    unused
+    memset(p, 0, 24);
+    p+=24;
+
+    //8n     LISTofKEYCODE                  keycodes
+    p[0] = 0x32;
+    p[1] = 0x3e;
+    p[2] = 0x00;
+    p[3] = 0x00;
+    p[4] = 0x42;
+    p[5] = 0x00;
+    p[6] = 0x00;
+    p[7] = 0x00;
+    p[8] = 0x25;
+    p[9] = 0x69;
+    p[10] = 0x00;
+    p[11] = 0x00;
+    p[12] = 0x40;
+    p[13] = 0x6c;
+    p[14] = 0xcd;
+    p[15] = 0x00;
+    p[16] = 0x4d;
+    p[17] = 0x00;
+    p[18] = 0x00;
+    p[19] = 0x00;
+    p[20] = 0x00;
+    p[21] = 0x00;
+    p[22] = 0x00;
+    p[23] = 0x00;
+    p[24] = 0x85;
+    p[25] = 0x86;
+    p[26] = 0xce;
+    p[27] = 0xcf;
+    p[28] = 0x5c;
+    p[29] = 0xcb;
+    p[30] = 0x00;
+    p[31] = 0x00;
+    p+=32;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendGetKeyboardMappingResponse
+{
+    if (_connfd < 0) {
+        return;
+    }
+
+    id data = [[Definitions homeDir:@"Work/x11/xclientdata.out"] dataFromFile];
+    unsigned char *bytes = [data bytes];
+    int len = [data length];
+    write_uint16(bytes+2, _sequenceNumber);
+    send(_connfd, bytes, len, 0);
+    return;
+
+
+#if 0
+
+
+    unsigned char *bytes = [_data bytes];
+    int len = [_data length];
+    if (len < 4) {
+NSLog(@"not enough data");
+        return;
+    }
+    int firstKeycode = bytes[4];
+    int count = bytes[5];
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1     n                               keysyms-per-keycode
+    p[0] = 1;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     nm                              reply length (m = count field
+    //                                       from the request)
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+
+    //24                                    unused
+    memset(p, 0, 24);
+    p+=24;
+
+    //4nm     LISTofKEYSYM                  keysyms
+    for (int i=0; i<count; i++) {
+        p[0] = 32;
+        p[1] = 0;
+        p[2] = 0;
+        p[3] = 0;
+        p+=4;
+    }
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+#endif
 }
 @end
 
