@@ -2,8 +2,6 @@
 
 Simple X Server (X11)
 
-Not yet working
-
 ## How to compile and run
 
 $ perl build.pl
@@ -14,7 +12,9 @@ $ ./smithers XServer
 
 Then run a program that connects to port 6002 (:2 means 6000+2):
 
-$ DISPLAY=:2 xpenguins
+$ DISPLAY=:2 xterm
+
+$ DISPLAY=:2 hotdog
 
 ## Legal
 
