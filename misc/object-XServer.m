@@ -658,6 +658,8 @@ lengthOfAuthorizationProtocolData);
     else if (opcode == 61) { results = [self parseClearAreaRequest:requestLength]; }
     else if (opcode == 112) { results = [self parseSetCloseDownModeRequest:requestLength]; }
     else if (opcode == 25) { results = [self parseSendEventRequest:requestLength]; }
+    else if (opcode == 23) { results = [self parseGetSelectionOwnerRequest:requestLength]; }
+    else if (opcode == 38) { results = [self parseQueryPointerRequest:requestLength]; }
 
     [self setValue:results forKey:@"request"];
 }
@@ -1922,6 +1924,34 @@ NSLog(@"requestLength is not 6");
 
     return results;
 }
+- (id)parseGetSelectionOwnerRequest:(int)requestLength
+{
+    if (requestLength != 2) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t selection = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", selection) forKey:@"selection"];
+
+    return results;
+}
+- (id)parseQueryPointerRequest:(int)requestLength
+{
+    if (requestLength != 2) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t window = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", window) forKey:@"window"];
+
+    return results;
+}
 
 - (void)sendResponse
 {
@@ -2086,6 +2116,14 @@ NSLog(@"requestLength is not 6");
         return;
     } else if (opcode == 25) { //SendEvent
         [self processSendEventRequest:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 23) { //GetSelectionOwner
+        [self sendGetSelectionOwnerResponse:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 38) { //QueryPointer
+        [self sendQueryPointerResponse:requestLength];
         [self consumeRequest];
         return;
     }
@@ -3677,6 +3715,96 @@ NSLog(@"sending %d bytes", p-buf);
 NSLog(@"sending %d bytes", p-buf);
     send(_connfd, buf, p-buf, 0);
 }
+- (void)sendGetSelectionOwnerResponse:(int)requestLength
+{
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1                                     unused
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //4     WINDOW                          owner
+    //      0     None
+    write_uint32(p, 0);
+    p+=4;
+
+    //20                                    unused
+    memset(p, 0, 20);
+    p+=20;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendQueryPointerResponse:(int)requestLength
+{
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1     BOOL                            same-screen
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //4     WINDOW                          root
+    write_uint32(p, _rootWindow);
+    p+=4;
+
+    //4     WINDOW                          child
+    //      0     None
+    write_uint32(p, 0);
+    p+=4;
+
+    //2     INT16                           root-x
+    write_uint16(p, _mouseX);
+    p+=2;
+
+    //2     INT16                           root-y
+    write_uint16(p, _mouseY);
+    p+=2;
+
+    //2     INT16                           win-x
+    write_uint16(p, _mouseX);
+    p+=2;
+
+    //2     INT16                           win-y
+    write_uint16(p, _mouseY);
+    p+=2;
+
+    //2     SETofKEYBUTMASK                 mask
+    write_uint16(p, 0);
+    p+=2;
+
+    //6                                     unused
+    memset(p, 0, 6);
+    p+=6;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
 
 - (void)processCreateWindowRequest:(int)requestLength
 {
@@ -3902,6 +4030,8 @@ NSLog(@"sending %d bytes", p-buf);
 NSLog(@"sending 32 bytes");
     send(_connfd, buf, 32, 0);
 }
+
+    
 
 - (void)sendKeyPressEvent:(int)keycode
 {
