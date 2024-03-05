@@ -344,8 +344,12 @@ static id str =
         _internAtomCounter = 100;
         [self setValue:nsdict() forKey:@"internAtoms"];
 
+        id rootWindow = nsdict();
+        [rootWindow setValue:@"32" forKey:@"depth"];
+        [rootWindow setValue:@"1024" forKey:@"width"];
+        [rootWindow setValue:@"768" forKey:@"height"];
         id windows = nsdict();
-        [windows setValue:nsdict() forKey:@"99"];
+        [windows setValue:rootWindow forKey:@"99"];
         [self setValue:windows forKey:@"windows"];
     }
     return self;
@@ -485,7 +489,8 @@ static id str =
         id key = [windowsAllKeys nth:i];
         id val = [_windows valueForKey:key];
         cursorY += 10;
-        [bitmap drawBitmapText:nsfmt(@"window %@", key) x:r.x+5 y:cursorY];
+        id text = nsfmt(@"window %@ x:%@ y:%@ width:%@ height:%@", key, [val valueForKey:@"x"], [val valueForKey:@"y"], [val valueForKey:@"width"], [val valueForKey:@"height"]);
+        [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
         cursorY += textHeight;
         id valBitmap = [val valueForKey:@"bitmap"];
         [bitmap drawBitmap:valBitmap x:r.x+5 y:cursorY];
@@ -652,6 +657,7 @@ lengthOfAuthorizationProtocolData);
     else if (opcode == 62) { results = [self parseCopyAreaRequest:requestLength]; }
     else if (opcode == 61) { results = [self parseClearAreaRequest:requestLength]; }
     else if (opcode == 112) { results = [self parseSetCloseDownModeRequest:requestLength]; }
+    else if (opcode == 25) { results = [self parseSendEventRequest:requestLength]; }
 
     [self setValue:results forKey:@"request"];
 }
@@ -1891,6 +1897,31 @@ NSLog(@"requestLength is not 6");
 
     return results;
 }
+- (id)parseSendEventRequest:(int)requestLength
+{
+    if (requestLength != 11) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    int propagate = bytes[1];
+
+    id results = nsdict();
+    [results setValue:nsfmt(@"%d", propagate) forKey:@"propagate"];
+
+    uint32_t destination = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", destination) forKey:@"destination"];
+    [results setValue:@"0=PointerWindow 1=InputFocus" forKey:@"destinationDescription"];
+
+    uint32_t eventMask = read_uint32(bytes+8);
+    [results setValue:nsfmt(@"%lu", eventMask) forKey:@"eventMask"];
+
+    id event = [NSData dataWithBytes:bytes+12 length:32];
+    [results setValue:event forKey:@"event"];
+
+    return results;
+}
 
 - (void)sendResponse
 {
@@ -2007,6 +2038,7 @@ NSLog(@"requestLength is not 6");
         [self consumeRequest];
         return;
     } else if (opcode == 12) { //ConfigureWindow
+        [self processConfigureWindowRequest:requestLength];
         [self consumeRequest];
         return;
     } else if (opcode == 96) { //RecolorCursor
@@ -2042,6 +2074,18 @@ NSLog(@"requestLength is not 6");
         return;
     } else if (opcode == 61) { //ClearArea
         [self processClearAreaRequest:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 117) { //GetPointerMapping
+        [self sendGetPointerMappingResponse:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 108) { //GetScreenSaver
+        [self sendGetScreenSaverResponse:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 25) { //SendEvent
+        [self processSendEventRequest:requestLength];
         [self consumeRequest];
         return;
     }
@@ -2220,23 +2264,19 @@ NSLog(@"requestLength is not 6");
     p+=4;
 
     //2     CARD16                          width-in-pixels
-    p[0] = 0;
-    p[1] = 2;
+    write_uint16(p, 1024);
     p+=2;
 
     //2     CARD16                          height-in-pixels
-    p[0] = 0;
-    p[1] = 2;
+    write_uint16(p, 768);
     p+=2;
 
     //2     CARD16                          width-in-millimeters
-    p[0] = 0;
-    p[1] = 2;
+    write_uint16(p, 1024);
     p+=2;
 
     //2     CARD16                          height-in-millimeters
-    p[0] = 0;
-    p[1] = 2;
+    write_uint16(p, 768);
     p+=2;
 
     //2     CARD16                          min-installed-maps
@@ -3554,6 +3594,89 @@ NSLog(@"sending %d bytes", p-buf);
     send(_connfd, buf, p-buf, 0);
 #endif
 }
+- (void)sendGetPointerMappingResponse:(int)requestLength
+{
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1     n                               length of map
+    p[0] = 3;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     (n+p)/4                         reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //24                                    unused
+    memset(p, 0, 24);
+    p+=24;
+
+    //n     LISTofCARD8                     map
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 0;
+    p+=4;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendGetScreenSaverResponse:(int)requestLength
+{
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1                                     unused
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //2     CARD16                          timeout
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     CARD16                          interval
+    write_uint16(p, 0);
+    p+=2;
+
+    //1                                     prefer-blanking
+    //      0     No
+    //      1     Yes
+    *p = 0;
+    p++;
+
+    //1                                     allow-exposures
+    //      0     No
+    //      1     Yes
+    *p = 0;
+    p++;
+
+    //18                                    unused
+    memset(p, 0, 18);
+    p+=18;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
 
 - (void)processCreateWindowRequest:(int)requestLength
 {
@@ -3707,6 +3830,77 @@ NSLog(@"sending %d bytes", p-buf);
     int dstY = [request intValueForKey:@"dstY"];
 
     [windowBitmap drawBitmap:requestBitmap x:dstX y:dstY];
+}
+
+- (void)processConfigureWindowRequest:(int)requestLength
+{
+    id request = [self parseConfigureWindowRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    id windowKey = [request valueForKey:@"window"];
+    if (!windowKey) {
+        return;
+    }
+
+    id window = [_windows valueForKey:windowKey];
+    if (!window) {
+        return;
+    }
+
+    id x = [request valueForKey:@"x"];
+    if (x) {
+        [window setValue:x forKey:@"x"];
+    }
+
+    id y = [request valueForKey:@"y"];
+    if (y) {
+        [window setValue:y forKey:@"y"];
+    }
+
+    id width = [request valueForKey:@"width"];
+    if (width) {
+        [window setValue:width forKey:@"width"];
+    }
+
+    id height = [request valueForKey:@"height"];
+    if (height) {
+        [window setValue:height forKey:@"height"];
+    }
+
+    id borderWidth = [request valueForKey:@"borderWidth"];
+    if (borderWidth) {
+        [window setValue:height forKey:@"borderWidth"];
+    }
+}
+
+- (void)processSendEventRequest:(int)requestLength
+{
+    id request = [self parseSendEventRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    uint32_t destination = [request unsignedLongValueForKey:@"destination"];
+
+    id event = [request valueForKey:@"event"];
+
+    int len = [event length];
+    if (len != 32) {
+        return;
+    }
+
+    unsigned char *bytes = [event bytes];
+
+    unsigned char buf[32];
+    memcpy(buf, bytes, 32);
+
+    write_uint16(&buf[2], _sequenceNumber);
+    write_uint32(&buf[4], destination);
+
+NSLog(@"sending 32 bytes");
+    send(_connfd, buf, 32, 0);
 }
 
 - (void)sendKeyPressEvent:(int)keycode
