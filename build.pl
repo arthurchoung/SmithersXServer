@@ -47,6 +47,9 @@ sub cflagsForFile
     if ($path =~ m/\/external\/tidy-html5-5.6.0\//) {
         return "-I$execPath/external/tidy-html5-5.6.0/include -I$execPath/external/tidy-html5-5.6.0/src";
     }
+    if ($path eq "$execPath/misc/linux-drm.m") {
+        return "$objcflags -I/usr/include/libdrm";
+    }
     if ($path eq "$execPath/misc/pucko-parseHTML.m") {
         return "$objcflags -I$execPath/external/tidy-html5-5.6.0/include";
     }
@@ -66,11 +69,8 @@ sub cflagsForFile
 sub ldflagsForFile
 {
     my ($path) = @_;
-    if ($path eq "$execPath/linux/linux-x11.m") {
-        return '-lX11 -lXext';
-    }
-    if ($path eq "$execPath/linux/linux-opengl.m") {
-        return '-lGL';
+    if ($path eq "$execPath/misc/linux-drm.m") {
+        return '-ldrm';
     }
     if ($path eq "$execPath/misc/misc-gmime.m") {
         return `pkg-config --libs gmime-3.0`;
