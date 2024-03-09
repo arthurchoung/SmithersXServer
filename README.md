@@ -6,6 +6,8 @@ Simple X Server (X11)
 
 $ perl build.pl
 
+$ sh makeUtils.sh
+
 To run the X Server (runs on port 6002):
 
 $ ./smithers XServer
