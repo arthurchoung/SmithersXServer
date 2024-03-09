@@ -8,9 +8,9 @@ $ perl build.pl
 
 $ sh makeUtils.sh
 
-To run the X Server (runs on port 6002):
+Run the X Server from the console (on port 6002):
 
-$ ./smithers XServer
+$ ./smithers runDRM
 
 Then run a program that connects to port 6002 (:2 means 6000+2):
 
