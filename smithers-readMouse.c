@@ -33,8 +33,10 @@ void main(int argc, char **argv)
             int dy = buf[2];
             int scroll = buf[3];
             printf("dx:%d dy:%d left:%d middle:%d right:%d scroll:%d\n", dx, dy, left, middle, right, scroll);
+            fflush(stdout);
         } else {
             printf("n:%d\n", n);
+            fflush(stdout);
         }
     }
     exit(0);
