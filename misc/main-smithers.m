@@ -2,7 +2,7 @@
 
  SmithersXServer
 
- Copyright (c) 2023 Arthur Choung. All rights reserved.
+ Copyright (c) 2024 Arthur Choung. All rights reserved.
 
  Email: arthur -at- hotdoglinux.com
 
