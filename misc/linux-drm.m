@@ -40,6 +40,38 @@
 #include <time.h>
 #include <unistd.h>
 
+static char *pointerPalette =
+". #000000\n"
+"X #AABBCC\n"
+"o #DD2222\n"
+"O #ffffff\n"
+;
+
+static char *pointerPixels =
+"............          \n"
+"............          \n"
+"..XXXXXXXXXX..        \n"
+"..XXXXXXXXXX..        \n"
+"..ooooooooXX..        \n"
+"..ooooooooXX..        \n"
+"..ooooooXX..          \n"
+"..ooooooXX..          \n"
+"..ooooooooXX..        \n"
+"..ooooooooXX..        \n"
+"..oooo..ooooXX..      \n"
+"..oooo..ooooXX..      \n"
+"  ....  ..ooooXX..    \n"
+"  ....  ..ooooXX..    \n"
+"          ..ooooXX..  \n"
+"          ..ooooXX..  \n"
+"            ..ooooXX..\n"
+"            ..ooooXX..\n"
+"              ..oo..  \n"
+"              ..oo..  \n"
+"                ..    \n"
+"                ..    \n"
+;
+
 static id nameForConnectorType(uint32_t type)
 {
     if (type == DRM_MODE_CONNECTOR_VGA) return @"VGA";
@@ -350,7 +382,12 @@ NSLog(@"modeData %@", modeData);
 NSLog(@"connectorID %d (after)", connectorID);
     }
 
-    id xserver = [@"XServer" asInstance];
+    id cmd = nsarr();
+    [cmd addObject:@"smithers-readMouse"];
+    id readMouseProcess = [cmd runCommandAndReturnProcess];
+
+
+    id xserver = [Definitions XServer];
 
     id pixelData = [framebuffer valueForKey:@"pixelData"];
     unsigned char *pixelBytes = [pixelData bytes];
@@ -360,13 +397,21 @@ NSLog(@"connectorID %d (after)", connectorID);
     unsigned char *srcBytes = [bitmap pixelBytes];
     int srcStride = [bitmap bitmapStride];
 
+    int mouseX = totalWidth/2;
+    int mouseY = highestHeight/2;
 	for (;;) {
+        id pool = [[NSAutoreleasePool alloc] init];
+
+
         Int4 r;
         r.x = 0;
         r.y = 0;
         r.w = [bitmap bitmapWidth];
         r.h = [bitmap bitmapHeight];
         [xserver drawInBitmap:bitmap rect:r];
+        [bitmap drawCString:pointerPixels palette:pointerPalette x:mouseX y:mouseY];
+        [bitmap setColor:@"red"];
+        [bitmap drawBitmapText:@"Click to send response" x:mouseX y:mouseY+22];
         for (int y=0; y<highestHeight; y++) {
             unsigned char *src = srcBytes + y*srcStride;
             unsigned char *dst = pixelBytes + y*stride;
@@ -379,8 +424,63 @@ NSLog(@"connectorID %d (after)", connectorID);
             }
         }
 
-		struct timespec ts = { .tv_nsec = 16666667 };
-		nanosleep(&ts, NULL);
+
+        fd_set rfds;
+        int maxFD=0;
+        int readMouseFD = -1;
+        FD_ZERO(&rfds);
+        if ([readMouseProcess respondsToSelector:@selector(fileDescriptor)]) {
+            readMouseFD = [readMouseProcess fileDescriptor];
+            if (readMouseFD != -1) {
+                FD_SET(readMouseFD, &rfds);
+                if (readMouseFD > maxFD) {
+                    maxFD = readMouseFD;
+                }
+            }
+        }
+        int *xserverFDs = [xserver fileDescriptors];
+        for (int i=0; xserverFDs[i]>=0; i++) {
+            FD_SET(xserverFDs[i], &rfds);
+            if (xserverFDs[i] > maxFD) {
+                maxFD = xserverFDs[i];
+            }
+        }
+
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 16666;
+        int result = select(maxFD+1, &rfds, 0, 0, &tv);
+        if (result > 0) {
+            if (FD_ISSET(readMouseFD, &rfds)) {
+                if ([readMouseProcess respondsToSelector:@selector(handleFileDescriptor)]) {
+                    [readMouseProcess handleFileDescriptor];
+                    for(;;) {
+                        id line = [[readMouseProcess valueForKey:@"data"] readLine];
+                        if (!line) {
+                            break;
+                        }
+                        int dx = [line intValueForKey:@"dx"];
+                        int dy = [line intValueForKey:@"dy"];
+                        int left = [line intValueForKey:@"left"];
+                        mouseX += dx;
+                        mouseY -= dy;
+                        if (left) {//FIXME temporary hack
+                            [xserver sendResponse];
+                        }
+                    }
+                }
+            }
+            for (int i=0; xserverFDs[i]>=0; i++) {
+                if (FD_ISSET(xserverFDs[i], &rfds)) {
+                    [xserver handleFileDescriptor:xserverFDs[i]];
+                }
+            }
+        }
+
+
+
+        [pool drain];
+
 	}
 
     exit(0);
