@@ -1,28 +1,3 @@
-/*
-
- SmithersXServer
-
- Copyright (c) 2024 Arthur Choung. All rights reserved.
-
- Email: arthur -at- hotdoglinux.com
-
- This file is part of SmithersXServer.
-
- SmithersXServer is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
- */
-
 #import "HOTDOG.h"
 
 #include <stdio.h>
@@ -33,6 +8,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <sys/shm.h>
 
 static struct sockaddr_in _addr;
 
@@ -302,32 +278,222 @@ id name_for_predefined_atom(int atom)
 
     id obj = [@"XServer" asInstance];
     [obj setValue:nsfmt(@"%d", sockfd) forKey:@"sockfd"];
+
+    [obj setAsValueForKey:@"XServer"];
     return obj;
 }
 @end
 
 @interface XServer : IvarObject
 {
-    BOOL _auto;
-    int _sequenceNumber;
     int _sockfd;
-    int _connfd;
-    id _data;
-    int _scrollY;
-    id _request;
+    id _connections;
 
     int _rootWindow;
     int _colormap;
     int _visualStaticGray;
-    int _visualTrueColor;
+    int _visualTrueColor24;
+    int _visualTrueColor32;
     int _internAtomCounter;
     id _internAtoms;
     id _windows;
+    id _shmSegments;
+
+    int _scrollY;
     int _mouseX;
     int _mouseY;
+    Int4 _rect;
+    int _currentColumn;
 }
 @end
 @implementation XServer
+- (void)removeCurrentColumn
+{
+    if (_currentColumn >= 1) {
+        if (_currentColumn <= [_connections count]) {
+            [_connections removeObjectAtIndex:_currentColumn-1];
+        }
+    }
+}
+- (id)contextualMenu
+{
+NSLog(@"XServer contextualMenu");
+    if (_currentColumn >= 1) {
+        if (_currentColumn <= [_connections count]) {
+            id elt = [_connections nth:_currentColumn-1];
+            return [elt contextualMenu];
+        }
+    }
+    return nil;
+}
+
+- (id)init
+{
+    self = [super init];
+    if (self) {
+        _sockfd = -1;
+
+        _rootWindow = 99;
+        _colormap = 98;
+        _visualStaticGray = 97;
+        _visualTrueColor24 = 96;
+        _visualTrueColor32 = 95;
+        _internAtomCounter = 100;
+        [self setValue:nsdict() forKey:@"internAtoms"];
+
+        id rootWindow = nsdict();
+        [rootWindow setValue:@"32" forKey:@"depth"];
+        [rootWindow setValue:@"1024" forKey:@"width"];
+        [rootWindow setValue:@"768" forKey:@"height"];
+        id windows = nsdict();
+        [windows setValue:rootWindow forKey:@"99"];
+        [self setValue:windows forKey:@"windows"];
+        [self setValue:nsdict() forKey:@"shmSegments"];
+
+        [self setValue:nsarr() forKey:@"connections"];
+    }
+    return self;
+}
+- (int *)fileDescriptors
+{
+    static int _fds[256];
+
+    _fds[0] = _sockfd;
+    int fdCount = 1;
+
+    for (int i=0; i<[_connections count]; i++) {
+        id elt = [_connections nth:i];
+        int connfd = [elt intValueForKey:@"connfd"];
+        if (connfd < 0) {
+            continue;
+        }
+        _fds[fdCount] = connfd;
+        fdCount++;
+        if (fdCount == 255) {
+            break;
+        }
+    }
+
+    _fds[fdCount] = -1;
+    return _fds;
+
+}
+
+- (void)handleFileDescriptor:(int)fd
+{
+    NSLog(@"XServer handleFileDescriptor:%d", fd);
+    if (fd == _sockfd) {
+        [self handleSocketFileDescriptor];
+        return;
+    }
+
+    for (int i=0; i<[_connections count]; i++) {
+        id elt = [_connections nth:i];
+        int connfd = [elt intValueForKey:@"connfd"];
+        if (fd == connfd) {
+            [elt handleFileDescriptor];
+            return;
+        }
+    }
+
+    NSLog(@"unhandled fd %d", fd);
+}
+
+- (void)handleSocketFileDescriptor
+{
+    NSLog(@"XServer handleSocketFileDescriptor");
+    if (_sockfd < 0) {
+        return;
+    }
+
+    socklen_t addrlen = sizeof(_addr);
+    int connfd = accept(_sockfd, (struct sockaddr *)&_addr, &addrlen);
+    if (connfd < 0) {
+        NSLog(@"accept failed");
+        return;
+    }
+
+    NSLog(@"connfd %d", connfd);
+    id connection = [@"XServerConnection" asInstance];
+    [connection setValue:nsfmt(@"%d", connfd) forKey:@"connfd"];
+    [_connections addObject:connection];
+}
+- (void)drawInBitmap:(id)bitmap rect:(Int4)r
+{
+    _rect = r;
+
+    int numberOfColumns = [_connections count] + 1;
+    int columnWidth = r.w/numberOfColumns;
+
+
+    [bitmap useAtariSTFont];
+    [bitmap setColor:@"white"];
+    [bitmap fillRect:r];
+    [bitmap setColor:@"black"];
+
+    int textHeight = [bitmap bitmapHeightForText:@"X"];
+
+
+    int cursorY = r.y+_scrollY;
+
+    id arr = nsarr();
+    [arr addObject:nsfmt(@"sockfd %d", _sockfd)];
+    for (int i=0; i<[_connections count]; i++) {
+        id elt = [_connections nth:i];
+        [arr addObject:nsfmt(@"connection %d: %@", i, elt)];
+    }
+    [arr addObject:nsfmt(@"rootWindow %d", _rootWindow)];
+    [arr addObject:nsfmt(@"colormap %d", _colormap)];
+    [arr addObject:nsfmt(@"visualStaticGray %d", _visualStaticGray)];
+    [arr addObject:nsfmt(@"visualTrueColor24 %d", _visualTrueColor24)];
+    [arr addObject:nsfmt(@"visualTrueColor32 %d", _visualTrueColor32)];
+    [arr addObject:nsfmt(@"internAtomCounter %d", _internAtomCounter)];
+    [arr addObject:nsfmt(@"internAtoms %@", _internAtoms)];
+    [arr addObject:nsfmt(@"windows %@", [_windows allKeys])];
+    [arr addObject:nsfmt(@"mouseX %d", _mouseX)];
+    [arr addObject:nsfmt(@"mouseY %d", _mouseY)];
+    [arr addObject:nsfmt(@"shmSegments %@", _shmSegments)];
+
+    id windowsAllKeys = [_windows allKeys];
+    for (int i=0; i<[windowsAllKeys count]; i++) {
+        id key = [windowsAllKeys nth:i];
+        id val = [_windows valueForKey:key];
+        cursorY += 10;
+        id text = nsfmt(@"window %@ x:%@ y:%@ width:%@ height:%@", key, [val valueForKey:@"x"], [val valueForKey:@"y"], [val valueForKey:@"width"], [val valueForKey:@"height"]);
+        text = [bitmap fitBitmapString:text width:columnWidth-10];
+        [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
+        cursorY += [bitmap bitmapHeightForText:text];
+        id valBitmap = [val valueForKey:@"bitmap"];
+        [bitmap drawBitmap:valBitmap x:r.x+5 y:cursorY];
+        cursorY += [valBitmap bitmapHeight];
+    }
+
+
+    id text = [arr join:@"\n"];
+    text = [bitmap fitBitmapString:text width:columnWidth-10];
+    cursorY += 10;
+    [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
+
+    for (int i=0; i<[_connections count]; i++) {
+        id elt = [_connections nth:i];
+        Int4 rr;
+        rr.x = columnWidth*(i+1);
+        rr.y = r.y;
+        rr.w = columnWidth;
+        rr.h = r.h;
+        [bitmap setColor:@"black"];
+        [bitmap drawVerticalLineAtX:rr.x-1 y:r.y y:r.y+r.h-1];
+        [elt drawInBitmap:bitmap rect:rr];
+    }
+
+    [bitmap setColor:@"blue"];
+    Int4 rr;
+    rr.x = columnWidth*_currentColumn;
+    rr.y = r.y;
+    rr.w = columnWidth-1;
+    rr.h = r.h;
+    [bitmap drawRectangle:rr];
+}
 - (id)nameForAtom:(int)atom
 {
     if (atom < 100) {
@@ -335,6 +501,48 @@ id name_for_predefined_atom(int atom)
     }
     id key = nsfmt(@"%d", atom);
     return [_internAtoms valueForKey:key];
+}
+- (void)handleMouseMoved:(id)event
+{
+    _mouseX = [event intValueForKey:@"mouseX"];
+    _mouseY = [event intValueForKey:@"mouseY"];
+    int numberOfColumns = [_connections count]+1;
+    int columnWidth = _rect.w / numberOfColumns;
+    _currentColumn = _mouseX / columnWidth;
+}
+- (void)handleScrollWheel:(id)event
+{
+    if (_currentColumn >= 1) {
+        if (_currentColumn <= [_connections count]) {
+            id elt = [_connections nth:_currentColumn-1];
+            [elt handleScrollWheel:event];
+            return;
+        }
+    }
+
+    _scrollY += [event intValueForKey:@"deltaY"];
+}
+@end
+
+@interface XServerConnection : IvarObject
+{
+    BOOL _auto;
+    int _sequenceNumber;
+    int _connfd;
+    id _data;
+    id _request;
+
+    int _scrollY;
+    int _mouseX;
+    int _mouseY;
+
+}
+@end
+@implementation XServerConnection
+- (id)nameForAtom:(int)atom
+{
+    id xserver = [@"XServer" valueForKey];
+    return [xserver nameForAtom:atom];
 }
 - (id)contextualMenu
 {
@@ -349,83 +557,23 @@ static id str =
 @"m,sendMotionNotifyEvent,sendMotionNotifyEvent\n"
 @"b,sendButtonPressEvent,sendButtonPressEvent;sendButtonReleaseEvent\n"
 @",toggle auto,\"toggleBoolKey:'auto'\"\n"
+@",Reset Sequence Number,\"setValue:0 forKey:'sequenceNumber'\"\n"
+@",,\n"
+@",removeCurrentColumn,\"'XServer'|valueForKey|removeCurrentColumn\"\n"
 ;
     id menu = [[str parseCSVFromString] asMenu];
     [menu setValue:self forKey:@"contextualObject"];
     return menu;
 }
 
-- (id)init
+- (int)fileDescriptor
 {
-    self = [super init];
-    if (self) {
-        _sockfd = -1;
-        _connfd = -1;
-
-        _rootWindow = 99;
-        _colormap = 98;
-        _visualStaticGray = 97;
-        _visualTrueColor = 96;
-        _internAtomCounter = 100;
-        [self setValue:nsdict() forKey:@"internAtoms"];
-
-        id rootWindow = nsdict();
-        [rootWindow setValue:@"32" forKey:@"depth"];
-        [rootWindow setValue:@"1024" forKey:@"width"];
-        [rootWindow setValue:@"768" forKey:@"height"];
-        id windows = nsdict();
-        [windows setValue:rootWindow forKey:@"99"];
-        [self setValue:windows forKey:@"windows"];
-    }
-    return self;
-}
-- (int *)fileDescriptors
-{
-    static int fds[3];
-    int i = 0;
-    if (_sockfd >= 0) {
-        fds[i] = _sockfd;
-        i++;
-    }
-    if (_connfd >= 0) {
-        fds[i] = _connfd;
-        i++;
-    }
-    fds[i] = -1;
-    return fds;
-}
-- (void)handleFileDescriptor:(int)fd
-{
-    NSLog(@"handleFileDescriptor");
-
-    if (fd == _sockfd) {
-        [self handleSocketFileDescriptor];
-    } else if (fd == _connfd) {
-        [self handleConnectionFileDescriptor];
-    }
+    return _connfd;
 }
 
-- (void)handleSocketFileDescriptor
+- (void)handleFileDescriptor
 {
-    if (_sockfd < 0) {
-        return;
-    }
-
-    if (_connfd < 0) {
-        socklen_t addrlen = sizeof(_addr);
-        int connfd = accept(_sockfd, (struct sockaddr *)&_addr, &addrlen);
-        if (connfd < 0) {
-            NSLog(@"accept failed");
-            return;
-        }
-
-        NSLog(@"connfd %d", connfd);
-        _connfd = connfd;
-        return;
-    }
-}
-- (void)handleConnectionFileDescriptor
-{
+    NSLog(@"XServerConnection handleFileDescriptor");
     if (_connfd < 0) {
         return;
     }
@@ -435,7 +583,9 @@ static id str =
     }
 
     char buf[65536];
-    int result = read(_connfd, buf, sizeof(buf));
+NSLog(@"reading from %d", _connfd);
+    int result = recv(_connfd, buf, sizeof(buf), MSG_DONTWAIT);
+NSLog(@"result %d", result);
     if (result > 0) {
         [_data appendBytes:buf length:result];
         [self setValue:nil forKey:@"request"];
@@ -444,9 +594,10 @@ static id str =
         close(_connfd);
         _connfd = -1;
     } else {
-        close(_connfd);
-        _connfd = -1;
-        NSLog(@"read error %s", strerror(errno));
+        NSLog(@"read error %d %s", errno, strerror(errno));
+        if (errno == EAGAIN) {
+        } else if (errno == EINTR) {
+        }
     }
 }
 - (void)drawInBitmap:(id)bitmap rect:(Int4)r
@@ -509,31 +660,10 @@ static id str =
         }
     }
 
-    id windowsAllKeys = [_windows allKeys];
-    for (int i=0; i<[windowsAllKeys count]; i++) {
-        id key = [windowsAllKeys nth:i];
-        id val = [_windows valueForKey:key];
-        cursorY += 10;
-        id text = nsfmt(@"window %@ x:%@ y:%@ width:%@ height:%@", key, [val valueForKey:@"x"], [val valueForKey:@"y"], [val valueForKey:@"width"], [val valueForKey:@"height"]);
-        [bitmap drawBitmapText:text x:r.x+5 y:cursorY];
-        cursorY += textHeight;
-        id valBitmap = [val valueForKey:@"bitmap"];
-        [bitmap drawBitmap:valBitmap x:r.x+5 y:cursorY];
-        cursorY += [valBitmap bitmapHeight];
-    }
-
     id arr = nsarr();
     [arr addObject:nsfmt(@"auto %d", _auto)];
     [arr addObject:nsfmt(@"sequenceNumber %d", _sequenceNumber)];
-    [arr addObject:nsfmt(@"sockfd %d", _sockfd)];
     [arr addObject:nsfmt(@"connfd %d", _connfd)];
-    [arr addObject:nsfmt(@"rootWindow %d", _rootWindow)];
-    [arr addObject:nsfmt(@"colormap %d", _colormap)];
-    [arr addObject:nsfmt(@"visualStaticGray %d", _visualStaticGray)];
-    [arr addObject:nsfmt(@"visualTrueColor %d", _visualTrueColor)];
-    [arr addObject:nsfmt(@"internAtomCounter %d", _internAtomCounter)];
-    [arr addObject:nsfmt(@"internAtoms %@", _internAtoms)];
-    [arr addObject:nsfmt(@"windows %@", windowsAllKeys)];
 
     [arr addObject:nsfmt(@"data length %d", [_data length])];
     unsigned char *bytes = [_data bytes];
@@ -685,10 +815,142 @@ lengthOfAuthorizationProtocolData);
     else if (opcode == 25) { results = [self parseSendEventRequest:requestLength]; }
     else if (opcode == 23) { results = [self parseGetSelectionOwnerRequest:requestLength]; }
     else if (opcode == 38) { results = [self parseQueryPointerRequest:requestLength]; }
+    else if (opcode == 40) { results = [self parseTranslateCoordinatesRequest:requestLength]; }
+    else if (opcode == 115) { results = [self parseForceScreenSaverRequest:requestLength]; }
+    else if (opcode == 10) { results = [self parseUnmapWindowRequest:requestLength]; }
+    else if (opcode == 4) { results = [self parseDestroyWindowRequest:requestLength]; }
+    else if (opcode == 79) { results = [self parseFreeColormapRequest:requestLength]; }
+    else if (opcode == 44) { results = [self parseQueryKeymapRequest:requestLength]; }
+    else if (opcode == 103) { results = [self parseGetKeyboardControlRequest:requestLength]; }
+    else if (opcode == 129) {
+        int minoropcode = bytes[1];
+        if (minoropcode == 0) {
+            results = [self parsePresentQueryVersionRequest:requestLength];
+        }
+    } else if (opcode == 130) {
+        int minoropcode = bytes[1];
+        if (minoropcode == 0) {
+            results = [self parseXFixesQueryVersionRequest:requestLength];
+        }
+    } else if (opcode == 135) {
+        int minoropcode = bytes[1];
+        if (minoropcode == 0) {
+            results = [self parseMITSHMQueryVersionRequest:requestLength];
+        } else if (minoropcode == 1) {
+            results = [self parseMITSHMAttachRequest:requestLength];
+        } else if (minoropcode == 2) {
+            results = [self parseMITSHMDetachRequest:requestLength];
+        } else if (minoropcode == 3) {
+            results = [self parseMITSHMPutImageRequest:requestLength];
+        }
+    }
 
     [self setValue:results forKey:@"request"];
 }
 
+- (id)parseFreeColormapRequest:(int)requestLength
+{
+    if (requestLength != 2) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+
+    uint32_t colormap = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", colormap) forKey:@"colormap"];
+
+    return results;
+}
+- (id)parseQueryKeymapRequest:(int)requestLength
+{
+    if (requestLength != 1) {
+        return nil;
+    }
+
+    id results = nsdict();
+
+    return results;
+}
+- (id)parseGetKeyboardControlRequest:(int)requestLength
+{
+    if (requestLength != 1) {
+        return nil;
+    }
+
+    id results = nsdict();
+
+    return results;
+}
+- (id)parseDestroyWindowRequest:(int)requestLength
+{
+    if (requestLength != 2) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+
+    uint32_t window = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", window) forKey:@"window"];
+
+    return results;
+}
+- (id)parseUnmapWindowRequest:(int)requestLength
+{
+    if (requestLength != 2) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+
+    uint32_t window = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", window) forKey:@"window"];
+
+    return results;
+}
+
+- (id)parseForceScreenSaverRequest:(int)requestLength
+{
+    if (requestLength != 1) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    int mode = bytes[1]; //0=reset 1=activate
+
+    id results = nsdict();
+    [results setValue:nsfmt(@"%d", mode) forKey:@"mode"];
+    [results setValue:@"0=reset 1=activate" forKey:@"modeDescription"];
+
+    return results;
+}
+- (id)parseTranslateCoordinatesRequest:(int)requestLength
+{
+    if (requestLength != 4) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    uint32_t srcWindow = read_uint32(bytes+4);
+    uint32_t dstWindow = read_uint32(bytes+8);
+    int srcX = read_uint16(bytes+12);
+    int srcY = read_uint16(bytes+14);
+
+    id results = nsdict();
+    [results setValue:nsfmt(@"%lu", srcWindow) forKey:@"srcWindow"];
+    [results setValue:nsfmt(@"%lu", dstWindow) forKey:@"dstWindow"];
+    [results setValue:nsfmt(@"%d", srcX) forKey:@"srcX"];
+    [results setValue:nsfmt(@"%d", srcY) forKey:@"srcY"];
+
+    return results;
+}
 - (id)parseQueryExtensionRequest:(int)requestLength
 {
     unsigned char *bytes = [_data bytes];
@@ -1977,6 +2239,151 @@ NSLog(@"requestLength is not 6");
 
     return results;
 }
+- (id)parseMITSHMQueryVersionRequest:(int)requestLength
+{
+    if (requestLength != 1) {
+        return nil;
+    }
+
+    id results = nsdict();
+
+    return results;
+}
+- (id)parseMITSHMAttachRequest:(int)requestLength
+{
+    if (requestLength != 4) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t shmseg = read_uint32(bytes+4);
+    id shmsegkey = nsfmt(@"%lu", shmseg);
+    [results setValue:shmsegkey forKey:@"shmseg"];
+    uint32_t shmid = read_uint32(bytes+8);
+    id shmidval = nsfmt(@"%lu", shmid);
+    [results setValue:shmidval forKey:@"shmid"];
+    int read_only = bytes[12];
+    [results setValue:nsfmt(@"%d", read_only) forKey:@"read_only"];
+
+    id xserver = [@"XServer" valueForKey];
+    id shmSegments = [xserver valueForKey:@"shmSegments"];
+    [shmSegments setValue:shmidval forKey:shmsegkey];
+    return results;
+}
+- (id)parseMITSHMDetachRequest:(int)requestLength
+{
+    if (requestLength != 2) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t shmseg = read_uint32(bytes+4);
+    id shmsegkey = nsfmt(@"%lu", shmseg);
+    [results setValue:shmsegkey forKey:@"shmseg"];
+
+    id xserver = [@"XServer" valueForKey];
+    id shmSegments = [xserver valueForKey:@"shmSegments"];
+    [shmSegments setValue:nil forKey:shmsegkey];
+
+    return results;
+}
+- (id)parseMITSHMPutImageRequest:(int)requestLength
+{
+    if (requestLength != 10) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t drawable = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", drawable) forKey:@"drawable"];
+    uint32_t gc = read_uint32(bytes+8);
+    [results setValue:nsfmt(@"%lu", gc) forKey:@"gc"];
+    uint16_t total_width = read_uint16(bytes+12);
+    [results setValue:nsfmt(@"%u", total_width) forKey:@"total_width"];
+    uint16_t total_height = read_uint16(bytes+14);
+    [results setValue:nsfmt(@"%u", total_height) forKey:@"total_height"];
+    uint16_t src_x = read_uint16(bytes+16);
+    [results setValue:nsfmt(@"%u", src_x) forKey:@"src_x"];
+    uint16_t src_y = read_uint16(bytes+18);
+    [results setValue:nsfmt(@"%u", src_y) forKey:@"src_y"];
+    uint16_t src_width = read_uint16(bytes+20);
+    [results setValue:nsfmt(@"%u", src_width) forKey:@"src_width"];
+    uint16_t src_height = read_uint16(bytes+22);
+    [results setValue:nsfmt(@"%u", src_height) forKey:@"src_height"];
+    uint16_t dst_x = read_uint16(bytes+24);
+    [results setValue:nsfmt(@"%u", dst_x) forKey:@"dst_x"];
+    uint16_t dst_y= read_uint16(bytes+26);
+    [results setValue:nsfmt(@"%u", dst_y) forKey:@"dst_y"];
+    int depth = bytes[28];
+    [results setValue:nsfmt(@"%d", depth) forKey:@"depth"];
+    int format = bytes[29];
+    [results setValue:nsfmt(@"%d", format) forKey:@"format"];
+    int send_event = bytes[30];
+    [results setValue:nsfmt(@"%d", send_event) forKey:@"send_event"];
+    uint32_t shmseg = read_uint32(bytes+32);
+    id shmsegkey = nsfmt(@"%lu", shmseg);
+    [results setValue:shmsegkey forKey:@"shmseg"];
+    uint32_t offset = read_uint32(bytes+36);
+    [results setValue:nsfmt(@"%lu", offset) forKey:@"offset"];
+
+    if ((depth == 24) || (depth == 32)) {
+        id xserver = [@"XServer" valueForKey];
+        id shmSegments = [xserver valueForKey:@"shmSegments"];
+        uint32_t shmid = [shmSegments unsignedLongValueForKey:shmsegkey];
+NSLog(@"shmid %lu", shmid);
+        void *addr = shmat(shmid, 0, SHM_RDONLY);
+NSLog(@"addr %x", addr);
+        if (addr != -1) {
+            id bitmap = [Definitions bitmapWithWidth:total_width height:total_height];
+            unsigned char *pixelBytes = [bitmap pixelBytes];
+            memcpy(pixelBytes, addr, total_width*total_height*4);
+            [results setValue:bitmap forKey:@"bitmap"];
+            int result = shmdt(addr);
+NSLog(@"shmdt %d", result);
+        }
+    }
+
+    return results;
+}
+
+- (id)parsePresentQueryVersionRequest:(int)requestLength
+{
+    if (requestLength != 3) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t clientMajorVersion = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", clientMajorVersion) forKey:@"clientMajorVersion"];
+    uint32_t clientMinorVersion = read_uint32(bytes+8);
+    [results setValue:nsfmt(@"%lu", clientMinorVersion) forKey:@"clientMinorVersion"];
+
+    return results;
+}
+- (id)parseXFixesQueryVersionRequest:(int)requestLength
+{
+    if (requestLength != 3) {
+        return nil;
+    }
+
+    unsigned char *bytes = [_data bytes];
+
+    id results = nsdict();
+    uint32_t clientMajorVersion = read_uint32(bytes+4);
+    [results setValue:nsfmt(@"%lu", clientMajorVersion) forKey:@"clientMajorVersion"];
+    uint32_t clientMinorVersion = read_uint32(bytes+8);
+    [results setValue:nsfmt(@"%lu", clientMinorVersion) forKey:@"clientMinorVersion"];
+
+    return results;
+}
 
 - (void)sendResponse
 {
@@ -2100,6 +2507,7 @@ NSLog(@"requestLength is not 6");
         [self consumeRequest];
         return;
     } else if (opcode == 8) { //MapWindow
+        [self processMapWindowRequest:requestLength];
         [self consumeRequest];
         return;
     } else if (opcode == 119) { //GetModifierMapping
@@ -2135,10 +2543,6 @@ NSLog(@"requestLength is not 6");
         [self sendGetPointerMappingResponse:requestLength];
         [self consumeRequest];
         return;
-    } else if (opcode == 108) { //GetScreenSaver
-        [self sendGetScreenSaverResponse:requestLength];
-        [self consumeRequest];
-        return;
     } else if (opcode == 25) { //SendEvent
         [self processSendEventRequest:requestLength];
         [self consumeRequest];
@@ -2151,6 +2555,56 @@ NSLog(@"requestLength is not 6");
         [self sendQueryPointerResponse:requestLength];
         [self consumeRequest];
         return;
+    } else if (opcode == 40) { //TranslateCoordinates
+        [self sendTranslateCoordinatesResponse:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 115) { //ForceScreenSaver
+        [self consumeRequest];
+        return;
+    } else if (opcode == 10) { //UnmapWindow
+        [self consumeRequest];
+        return;
+    } else if (opcode == 4) { //DestroyWindow
+        [self consumeRequest];
+        return;
+    } else if (opcode == 79) { //FreeColormap
+        [self consumeRequest];
+        return;
+    } else if (opcode == 44) { //QueryKeymap
+        [self sendQueryKeymapResponse:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 103) { //GetKeyboardControl
+        [self sendGetKeyboardControlResponse:requestLength];
+        [self consumeRequest];
+        return;
+    } else if (opcode == 129) {
+        int minoropcode = bytes[1];
+        if (minoropcode == 0) {
+            [self sendPresentQueryVersionResponse:requestLength];
+            [self consumeRequest];
+        }
+    } else if (opcode == 130) {
+        int minoropcode = bytes[1];
+        if (minoropcode == 0) {
+            [self sendXFixesQueryVersionResponse:requestLength];
+            [self consumeRequest];
+        }
+    } else if (opcode == 135) {
+        int minoropcode = bytes[1];
+        if (minoropcode == 0) {
+            [self sendMITSHMQueryVersionResponse:requestLength];
+            [self consumeRequest];
+        } else if (minoropcode == 1) {
+            [self consumeRequest];
+        } else if (minoropcode == 2) {
+            [self consumeRequest];
+        } else if (minoropcode == 3) {
+            [self sendMITSHMPutImageResponse:requestLength];
+            [self consumeRequest];
+
+        }
     }
 
     _auto = 0;
@@ -2290,19 +2744,14 @@ NSLog(@"requestLength is not 6");
     p[4] = 0;
     p+=5;
 
+    id xserver = [@"XServer" valueForKey];
     //m     LISTofSCREEN                    roots (m is always a multiple of 4)
     //4     WINDOW                          root
-    p[0] = _rootWindow;
-    p[1] = 0;
-    p[2] = 0;
-    p[3] = 0;
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
     //4     COLORMAP                        default-colormap
-    p[0] = _colormap;
-    p[1] = 0;
-    p[2] = 0;
-    p[3] = 0;
+    write_uint32(p, [xserver unsignedLongValueForKey:@"colormap"]);
     p+=4;
 
     //4     CARD32                          white-pixel
@@ -2353,10 +2802,7 @@ NSLog(@"requestLength is not 6");
     p+=2;
 
     //4     VISUALID                        root-visual
-    p[0] = _visualTrueColor;
-    p[1] = 0;
-    p[2] = 0;
-    p[3] = 0;
+    write_uint32(p, [xserver unsignedLongValueForKey:@"visualTrueColor24"]);
     p+=4;
 
     //1                                     backing-stores
@@ -2375,7 +2821,7 @@ NSLog(@"requestLength is not 6");
     p++;
 
     //1     CARD8                           number of DEPTHs in allowed-depths
-    p[0] = 2;
+    p[0] = 3;
     p++;
 
     //n     LISTofDEPTH                     allowed-depths (n is always a
@@ -2399,10 +2845,7 @@ NSLog(@"requestLength is not 6");
 
     //24n     LISTofVISUALTYPE              visuals
     //4     VISUALID                        visual-id
-    p[0] = _visualStaticGray;
-    p[1] = 0;
-    p[2] = 0;
-    p[3] = 0;
+    write_uint32(p, [xserver unsignedLongValueForKey:@"visualStaticGray"]);
     p+=4;
     //1                                     class
     //      0     StaticGray
@@ -2445,6 +2888,71 @@ NSLog(@"requestLength is not 6");
     p[3] = 0;
     p+=4;
 
+///
+
+    //1     CARD8                           depth
+    p[0] = 24;
+    p++;
+    //1                                     unused
+    p[0] = 0;
+    p++;
+    //2     n                               number of VISUALTYPES in visuals
+    p[0] = 1;
+    p[1] = 0;
+    p+=2;
+    //4                                     unused
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+
+    //24n     LISTofVISUALTYPE              visuals
+    //4     VISUALID                        visual-id
+    write_uint32(p, [xserver unsignedLongValueForKey:@"visualTrueColor24"]);
+    p+=4;
+    //1                                     class
+    //      0     StaticGray
+    //      1     GrayScale
+    //      2     StaticColor
+    //      3     PseudoColor
+    //      4     TrueColor
+    //      5     DirectColor
+    p[0] = 4;
+    p++;
+    //1     CARD8                           bits-per-rgb-value
+    p[0] = 8;
+    p++;
+    //2     CARD16                          colormap-entries
+    p[0] = 0;
+    p[1] = 1;
+    p+=2;
+    //4     CARD32                          red-mask
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0xff;
+    p[3] = 0;
+    p+=4;
+    //4     CARD32                          green-mask
+    p[0] = 0;
+    p[1] = 0xff;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+    //4     CARD32                          blue-mask
+    p[0] = 0xff;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+    //4                                     unused
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+    p+=4;
+///
+
     //1     CARD8                           depth
     p[0] = 32;
     p++;
@@ -2464,10 +2972,7 @@ NSLog(@"requestLength is not 6");
 
     //24n     LISTofVISUALTYPE              visuals
     //4     VISUALID                        visual-id
-    p[0] = _visualTrueColor;
-    p[1] = 0;
-    p[2] = 0;
-    p[3] = 0;
+    write_uint32(p, [xserver unsignedLongValueForKey:@"visualTrueColor32"]);
     p+=4;
     //1                                     class
     //      0     StaticGray
@@ -2517,6 +3022,12 @@ NSLog(@"sending %d bytes p[6]=%d", p-buf, p[6]);
 }
 - (void)sendQueryExtensionResponse:(int)requestLength
 {
+    id request = [self parseQueryExtensionRequest:requestLength];
+    if (!request) {
+        return;
+    }
+    id name = [request valueForKey:@"name"];
+
     unsigned char buf[256];
     unsigned char *p = buf;
 
@@ -2540,15 +3051,35 @@ NSLog(@"sending %d bytes p[6]=%d", p-buf, p[6]);
     p+=4;
 
     //1     BOOL                            present
-    p[0] = 0;
+    if ([name isEqual:@"Present"]) {
+        p[0] = 0;
+    } else if ([name isEqual:@"XFIXES"]) {
+        p[0] = 0;
+    } else if ([name isEqual:@"MIT-SHM"]) {
+        p[0] = 1;
+    } else {
+        p[0] = 0;
+    }
     p++;
 
     //1     CARD8                           major-opcode
-    p[0] = 0;
+    if ([name isEqual:@"Present"]) {
+        p[0] = 0;//129;
+    } else if ([name isEqual:@"XFIXES"]) {
+        p[0] = 0;//130;
+    } else if ([name isEqual:@"MIT-SHM"]) {
+        p[0] = 135;
+    } else {
+        p[0] = 0;
+    }
     p++;
 
     //1     CARD8                           first-event
-    p[0] = 0;
+    if ([name isEqual:@"MIT-SHM"]) {
+        p[0] = 65;
+    } else {
+        p[0] = 0;
+    }
     p++;
 
     //1     CARD8                           first-error
@@ -2572,7 +3103,21 @@ NSLog(@"sending %d bytes", p-buf);
     int requestLongOffset = [request intValueForKey:@"longOffset"];
     int requestLongLength = [request intValueForKey:@"longLength"];
 
-    id window = [_windows valueForKey:requestWindow];
+    if ([requestProperty isEqual:@"23"]) {
+        id data = [[Definitions homeDir:@"xclientdata.out~RESOURCE_MANAGER"] dataFromFile];
+        if (data) {
+            unsigned char *bytes = [data bytes];
+            int len = [data length];
+            write_uint16(bytes+2, _sequenceNumber);
+            send(_connfd, bytes, len, 0);
+NSLog(@"Sending xclientdata.out~RESOURCE_MANAGER");
+            return;
+        }
+    }
+
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:requestWindow];
     id property = [[window valueForKey:@"properties"] valueForKey:requestProperty];
 
     int replyFormat = [property intValueForKey:@"format"];
@@ -2659,8 +3204,10 @@ NSLog(@"sending %d bytes", p-buf);
     id request = [self parseGetWindowAttributesRequest:requestLength];
     id window = nil;
     if (request) {
+        id xserver = [@"XServer" valueForKey];
+        id windows = [xserver valueForKey:@"windows"];
         id windowKey = [request valueForKey:@"window"];
-        window = [_windows valueForKey:windowKey];
+        window = [windows valueForKey:windowKey];
     }
 
     unsigned char buf[256];
@@ -2683,7 +3230,8 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     VISUALID                        visual
-    write_uint32(p, _visualTrueColor);
+    id xserver = [@"XServer" valueForKey];
+    write_uint32(p, [xserver unsignedLongValueForKey:@"visualTrueColor24"]);
     p+=4;
 
     //2                                     class
@@ -2756,7 +3304,9 @@ NSLog(@"sending %d bytes", p-buf);
 {
     id request = [self parseGetGeometryRequest:requestLength];
     id drawableKey = [request valueForKey:@"drawable"];
-    id window = [_windows valueForKey:drawableKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:drawableKey];
 
     unsigned char buf[256];
     unsigned char *p = buf;
@@ -2778,7 +3328,7 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
     //2     INT16                           x
@@ -2822,8 +3372,12 @@ NSLog(@"sending %d bytes", p-buf);
         name = @"";
     }
 
-    [_internAtoms setValue:name forKey:nsfmt(@"%d", _internAtomCounter)];
-    _internAtomCounter++;
+    id xserver = [@"XServer" valueForKey];
+    id internAtoms = [xserver valueForKey:@"internAtoms"];
+    int internAtomCounter = [xserver intValueForKey:@"internAtomCounter"];
+    [internAtoms setValue:name forKey:nsfmt(@"%d", internAtomCounter)];
+    internAtomCounter++;
+    [xserver setValue:nsfmt(@"%d", internAtomCounter) forKey:@"internAtomCounter"];
 
     unsigned char buf[256];
     unsigned char *p = buf;
@@ -2845,7 +3399,7 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     ATOM                            atom
-    write_uint32(p, _internAtomCounter);
+    write_uint32(p, [xserver unsignedLongValueForKey:@"internAtomCounter"]);
     p+=4;
 
     //20                                    unused
@@ -2878,7 +3432,8 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+    id xserver = [@"XServer" valueForKey];
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
     //4     WINDOW                          parent
@@ -3675,7 +4230,7 @@ NSLog(@"sending %d bytes", p-buf);
     p+=2;
 
     //4     (n+p)/4                         reply length
-    write_uint32(p, 0);
+    write_uint32(p, 1);
     p+=4;
 
     //24                                    unused
@@ -3783,7 +4338,7 @@ NSLog(@"sending %d bytes", p-buf);
     p++;
 
     //1     BOOL                            same-screen
-    p[0] = 0;
+    p[0] = 1;
     p++;
 
     //2     CARD16                          sequence number
@@ -3795,7 +4350,8 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+    id xserver = [@"XServer" valueForKey];
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
     //4     WINDOW                          child
@@ -3830,6 +4386,345 @@ NSLog(@"sending %d bytes", p-buf);
 NSLog(@"sending %d bytes", p-buf);
     send(_connfd, buf, p-buf, 0);
 }
+- (void)sendTranslateCoordinatesResponse:(int)requestLength
+{
+    id request = [self parseTranslateCoordinatesRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1     BOOL                            same-screen
+    p[0] = 1;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //4     WINDOW                          child
+    //      0     None
+    write_uint32(p, 0);
+    p+=4;
+
+    //2     INT16                           dst-x
+    write_uint16(p, [request intValueForKey:@"srcX"]);
+    p+=2;
+
+    //2     INT16                           dst-y
+    write_uint16(p, [request intValueForKey:@"srcY"]);
+    p+=2;
+
+    //16                                    unused
+    memset(p, 0, 16);
+    p+=16;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendQueryKeymapResponse:(int)requestLength
+{
+    id request = [self parseQueryKeymapRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1                                     unused
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 2);
+    p+=4;
+
+    for (int i=0; i<32; i++) {
+        *p = 0;
+        p++;
+    }
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendGetKeyboardControlResponse:(int)requestLength
+{
+    id request = [self parseGetKeyboardControlRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //1                                     global-auto-repeat
+    //      0     Off
+    //      1     On
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 5);
+    p+=4;
+
+    //4     CARD32                          led-mask
+    write_uint32(p, 0);
+    p+=4;
+
+    //1     CARD8                           key-click-percent
+    *p = 0;
+    p++;
+
+    //1     CARD8                           bell-percent
+    *p = 0;
+    p++;
+
+    //2     CARD16                          bell-pitch
+    write_uint16(p, 0);
+    p+=2;
+
+    //2     CARD16                          bell-duration
+    write_uint16(p, 0);
+    p+=2;
+
+    //2                                     unused
+    p[0] = 0;
+    p[1] = 0;
+    p+=2;
+
+    for (int i=0; i<32; i++) {
+        *p = 0;
+        p++;
+    }
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+
+
+
+- (void)sendMITSHMQueryVersionResponse:(int)requestLength
+{
+    id request = [self parseMITSHMQueryVersionRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //reply
+    p[0] = 1;
+    p++;
+
+    //shared_pixmaps
+    p[0] = 1;
+    p++;
+
+    //sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //major_version
+    write_uint16(p, 1);
+    p+=2;
+
+    //minor_version
+    write_uint16(p, 2);
+    p+=2;
+
+    //uid
+    write_uint16(p, 0);
+    p+=2;
+
+    //gid
+    write_uint16(p, 100);
+    p+=2;
+
+    //pixmap_format
+    *p = 2;
+    p++;
+
+    //unused
+    memset(p, 0, 15);
+    p+=15;
+
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendMITSHMPutImageResponse:(int)requestLength
+{
+    id request = [self parseMITSHMPutImageRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    int send_event = [request intValueForKey:@"send_event"];
+    if (!send_event) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //code
+    p[0] = 65;
+    p++;
+
+    //unused
+    p[0] = 0;
+    p++;
+
+    //sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //drawable
+    write_uint32(p, [request unsignedLongValueForKey:@"drawable"]);
+    p+=4;
+
+    //minor_event
+    write_uint16(p, 3);
+    p+=2;
+
+    //major_event
+    *p = 135;
+    p++;
+
+    //unused
+    *p = 0;
+    p++;
+
+    //shmseg
+    write_uint32(p, [request unsignedLongValueForKey:@"shmseg"]);
+    p+=4;
+
+    //offset
+    write_uint32(p, [request unsignedLongValueForKey:@"offset"]);
+    p+=4;
+
+    //unused
+    memset(p, 0, 12);
+    p+=12;
+
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+
+- (void)sendPresentQueryVersionResponse:(int)requestLength
+{
+    id request = [self parsePresentQueryVersionRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //major-version:		CARD32
+    write_uint32(p, [request unsignedLongValueForKey:@"clientMajorVersion"]);
+    p+=4;
+
+    //minor-version:		CARD32
+    write_uint32(p, [request unsignedLongValueForKey:@"clientMinorVersion"]);
+    p+=4;
+
+    memset(p, 0, 16);
+    p+=16;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+- (void)sendXFixesQueryVersionResponse:(int)requestLength
+{
+    id request = [self parseXFixesQueryVersionRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[4096];
+    unsigned char *p = buf;
+
+    //1     1                               Reply
+    p[0] = 1;
+    p++;
+
+    //
+    p[0] = 0;
+    p++;
+
+    //2     CARD16                          sequence number
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    //4     0                               reply length
+    write_uint32(p, 0);
+    p+=4;
+
+    //major-version:		CARD32
+    write_uint32(p, [request unsignedLongValueForKey:@"clientMajorVersion"]);
+    p+=4;
+
+    //minor-version:		CARD32
+    write_uint32(p, [request unsignedLongValueForKey:@"clientMinorVersion"]);
+    p+=4;
+
+    memset(p, 0, 16);
+    p+=16;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
+}
+
 
 - (void)processCreateWindowRequest:(int)requestLength
 {
@@ -3843,7 +4738,9 @@ NSLog(@"sending %d bytes", p-buf);
         return;
     }
     [request setValue:nsdict() forKey:@"properties"];
-    [_windows setValue:request forKey:key];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    [windows setValue:request forKey:key];
 }
 
 - (void)processChangePropertyRequest:(int)requestLength
@@ -3858,7 +4755,9 @@ NSLog(@"sending %d bytes", p-buf);
         return;
     }
 
-    id window = [_windows valueForKey:windowKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:windowKey];
     if (window) {
         int mode = [request intValueForKey:@"mode"];
         id propertyKey = [request valueForKey:@"property"];
@@ -3879,7 +4778,9 @@ NSLog(@"sending %d bytes", p-buf);
     if (!drawableKey) {
         return;
     }
-    id window = [_windows valueForKey:drawableKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:drawableKey];
     if (!window) {
         return;
     }
@@ -3910,8 +4811,10 @@ NSLog(@"sending %d bytes", p-buf);
         return;
     }
 
-    id srcWindow = [_windows valueForKey:srcDrawableKey];
-    id dstWindow = [_windows valueForKey:dstDrawableKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id srcWindow = [windows valueForKey:srcDrawableKey];
+    id dstWindow = [windows valueForKey:dstDrawableKey];
     if (!srcWindow || !dstWindow) {
         return;
     }
@@ -3939,7 +4842,9 @@ NSLog(@"sending %d bytes", p-buf);
         return;
     }
 
-    id window = [_windows valueForKey:windowKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:windowKey];
     if (!window) {
         return;
     }
@@ -3965,7 +4870,9 @@ NSLog(@"sending %d bytes", p-buf);
         return;
     }
 
-    id window = [_windows valueForKey:drawableKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:drawableKey];
     if (!window) {
         return;
     }
@@ -3997,7 +4904,9 @@ NSLog(@"sending %d bytes", p-buf);
         return;
     }
 
-    id window = [_windows valueForKey:windowKey];
+    id xserver = [@"XServer" valueForKey];
+    id windows = [xserver valueForKey:@"windows"];
+    id window = [windows valueForKey:windowKey];
     if (!window) {
         return;
     }
@@ -4026,6 +4935,41 @@ NSLog(@"sending %d bytes", p-buf);
     if (borderWidth) {
         [window setValue:height forKey:@"borderWidth"];
     }
+}
+- (void)processMapWindowRequest:(int)requestLength
+{
+    id request = [self parseMapWindowRequest:requestLength];
+    if (!request) {
+        return;
+    }
+
+    unsigned char buf[256];
+    unsigned char *p = buf;
+
+    *p = 19;
+    p++;
+
+    *p = 0;
+    p++;
+
+    write_uint16(p, _sequenceNumber);
+    p+=2;
+
+    uint32_t window = [request unsignedLongValueForKey:@"window"];
+    write_uint32(p, window);
+    p+=4;
+
+    write_uint32(p, window);
+    p+=4;
+
+    *p = 0;
+    p++;
+
+    memset(p, 0, 19);
+    p+=19;
+
+NSLog(@"sending %d bytes", p-buf);
+    send(_connfd, buf, p-buf, 0);
 }
 
 - (void)processSendEventRequest:(int)requestLength
@@ -4065,9 +5009,11 @@ NSLog(@"sending 32 bytes");
     }
 
 //FIXME
-id allKeys = [_windows allKeys];
+id xserver = [@"XServer" valueForKey];
+id windows = [xserver valueForKey:@"windows"];
+id allKeys = [windows allKeys];
 id lastObject = [allKeys lastObject];
-id window = [_windows valueForKey:lastObject];
+id window = [windows valueForKey:lastObject];
 
     unsigned char buf[256];
     unsigned char *p = buf;
@@ -4089,7 +5035,7 @@ id window = [_windows valueForKey:lastObject];
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
     //4     WINDOW                          event
@@ -4165,13 +5111,15 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+    id xserver = [@"XServer" valueForKey];
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
 //FIXME
-id allKeys = [_windows allKeys];
+id windows = [xserver valueForKey:@"windows"];
+id allKeys = [windows allKeys];
 id lastObject = [allKeys lastObject];
-id window = [_windows valueForKey:lastObject];
+id window = [windows valueForKey:lastObject];
 
     //4     WINDOW                          event
     write_uint32(p, [lastObject unsignedLongValue]);
@@ -4243,13 +5191,15 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+id xserver = [@"XServer" valueForKey];
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
 //FIXME
-id allKeys = [_windows allKeys];
+id windows = [xserver valueForKey:@"windows"];
+id allKeys = [windows allKeys];
 id lastObject = [allKeys lastObject];
-id window = [_windows valueForKey:lastObject];
+id window = [windows valueForKey:lastObject];
 
     //4     WINDOW                          event
     write_uint32(p, [lastObject unsignedLongValue]);
@@ -4321,13 +5271,15 @@ NSLog(@"sending %d bytes", p-buf);
     p+=4;
 
     //4     WINDOW                          root
-    write_uint32(p, _rootWindow);
+id xserver = [@"XServer" valueForKey];
+    write_uint32(p, [xserver unsignedLongValueForKey:@"rootWindow"]);
     p+=4;
 
 //FIXME
-id allKeys = [_windows allKeys];
+id windows = [xserver valueForKey:@"windows"];
+id allKeys = [windows allKeys];
 id lastObject = [allKeys lastObject];
-id window = [_windows valueForKey:lastObject];
+id window = [windows valueForKey:lastObject];
 
     //4     WINDOW                          event
     write_uint32(p, [lastObject unsignedLongValue]);
