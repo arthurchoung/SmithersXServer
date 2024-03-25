@@ -26,6 +26,8 @@ Each additional column represents a client connection.
 
 Click on the appropriate client column to send a response to the data, if possible.
 
+Hit Control-C to quit.
+
 ## Legal
 
 Copyright (c) 2024 Arthur Choung. All rights reserved.
