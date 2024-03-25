@@ -8,15 +8,23 @@ $ perl build.pl
 
 $ sh makeUtils.sh
 
-Run the X Server from the console (on port 6002):
+Run the X Server from the console using /dev/dri/card0 (listening on port 6002):
 
 $ ./smithers runDRM
 
+To run it using /dev/dri/card1 (note the colon and space):
+
+$ ./smithers runDRM: 1
+
 Then run a program that connects to port 6002 (:2 means 6000+2):
 
-$ DISPLAY=:2 xterm
+$ DISPLAY=:2 mpv --vo=x11 video.mp4
 
-$ DISPLAY=:2 hotdog
+The first column is the server object. If there are no connections, it is the only column.
+
+Each additional column represents a client connection.
+
+Click on the appropriate client column to send a response to the data, if possible.
 
 ## Legal
 
