@@ -50,6 +50,9 @@ sub cflagsForFile
     if ($path eq "$execPath/misc/linux-drm.m") {
         return "$objcflags -I/usr/include/libdrm";
     }
+    if ($path eq "$execPath/misc/linux-drm2.m") {
+        return "$objcflags -I/usr/include/libdrm";
+    }
     if ($path eq "$execPath/misc/pucko-parseHTML.m") {
         return "$objcflags -I$execPath/external/tidy-html5-5.6.0/include";
     }
