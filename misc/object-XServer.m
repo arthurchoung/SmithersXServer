@@ -522,6 +522,16 @@ NSLog(@"XServer contextualMenu");
 
     _scrollY += [event intValueForKey:@"deltaY"];
 }
+- (void)handleMouseDown:(id)event
+{
+    if (_currentColumn >= 1) {
+        if (_currentColumn <= [_connections count]) {
+            id elt = [_connections nth:_currentColumn-1];
+            [elt sendResponse];
+            return;
+        }
+    }
+}
 @end
 
 @interface XServerConnection : IvarObject
