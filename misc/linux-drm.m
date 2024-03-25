@@ -40,6 +40,8 @@
 #include <time.h>
 #include <unistd.h>
 
+static BOOL _leftButtonDown = NO;
+
 static char *pointerPalette =
 ". #000000\n"
 "X #AABBCC\n"
@@ -285,9 +287,14 @@ static id createFramebuffer(int drmFD, int width, int height)
 @implementation Definitions(mfeklwfmklsdmfklsdmfkls)
 + (void)runDRM
 {
-	int drmFD = open("/dev/dri/card0", O_RDWR|O_NONBLOCK);
+    [Definitions runDRM:0];
+}
++ (void)runDRM:(int)cardNumber
+{
+    id deviceName = nsfmt(@"/dev/dri/card%d", cardNumber);
+	int drmFD = open([deviceName UTF8String], O_RDWR|O_NONBLOCK);
 	if (drmFD < 0) {
-		NSLog(@"unable to open /dev/dri/card0");
+		NSLog(@"unable to open %@", deviceName);
 		exit(1);
 	}
 
@@ -462,10 +469,54 @@ NSLog(@"connectorID %d (after)", connectorID);
                         int dx = [line intValueForKey:@"dx"];
                         int dy = [line intValueForKey:@"dy"];
                         int left = [line intValueForKey:@"left"];
-                        mouseX += dx;
-                        mouseY -= dy;
-                        if (left) {//FIXME temporary hack
-                            [xserver sendResponse];
+                        int scroll = [line intValueForKey:@"scroll"];
+                        if (dx || dy) {
+                            mouseX += dx;
+                            mouseY -= dy;
+                            if ([xserver respondsToSelector:@selector(handleMouseMoved:)]) {
+                                id event = nsdict();
+                                [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseX"];
+                                [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseY"];
+                                [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseRootX"];
+                                [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseRootY"];
+                                [xserver handleMouseMoved:event];
+                            }
+                        }
+                        if (_leftButtonDown) {
+                            if (!left) {
+                                _leftButtonDown = NO;
+                                if ([xserver respondsToSelector:@selector(handleMouseUp:)]) {
+                                    id event = nsdict();
+                                    [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseX"];
+                                    [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseY"];
+                                    [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseRootX"];
+                                    [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseRootY"];
+                                    [xserver handleMouseUp:event];
+                                }
+                            }
+                        } else {
+                            if (left) {
+                                _leftButtonDown = YES;
+                                if ([xserver respondsToSelector:@selector(handleMouseDown:)]) {
+                                    id event = nsdict();
+                                    [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseX"];
+                                    [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseY"];
+                                    [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseRootX"];
+                                    [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseRootY"];
+                                    [xserver handleMouseDown:event];
+                                }
+                            }
+                        }
+                        if (scroll) {
+                            if ([xserver respondsToSelector:@selector(handleScrollWheel:)]) {
+                                id event = nsdict();
+                                [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseX"];
+                                [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseY"];
+                                [event setValue:nsfmt(@"%d", mouseX) forKey:@"mouseRootX"];
+                                [event setValue:nsfmt(@"%d", mouseY) forKey:@"mouseRootY"];
+                                [event setValue:nsfmt(@"%d", scroll*20) forKey:@"scrolllingDeltaY"];
+                                [xserver handleScrollWheel:event];
+                            }
                         }
                     }
                 }
